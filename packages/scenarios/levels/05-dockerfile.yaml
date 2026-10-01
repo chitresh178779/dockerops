@@ -1,0 +1,172 @@
+metadata:
+  id: dockerfile
+  order: 5
+  title: "Build Trouble"
+  concept: "dockerfile-and-build"
+  difficulty: medium
+  estimatedMinutes: 30
+  prerequisites: [volumes]
+  xpReward: 160
+  commandFamilies: [build, images, container-lifecycle]
+  learningGoals:
+    - "Write and fix a Dockerfile"
+    - "Build images with docker build"
+    - "Run and verify your own image"
+
+narrative:
+  role: "You're on-call for prod-01. A teammate handed off a half-finished status page."
+  incident: >
+    There's a Dockerfile sitting in /root/workspace meant to build a tiny
+    status page image. Your teammate swears "it builds fine on my machine."
+    It does not build here.
+  symptoms:
+    - "docker build fails immediately with a file-not-found error."
+    - "The workspace has an index.html sitting right next to the Dockerfile."
+  missionBrief: >
+    Fix the Dockerfile so it actually builds, build the image as
+    statuspage:1.0, run it, and confirm it's really serving the right content.
+  timeline:
+    - "16:00 — Teammate writes the Dockerfile against a directory layout that never matches this workspace."
+    - "16:05 — Teammate leaves for the day without running docker build once."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+  networks: []
+  volumes: []
+  containers: []
+  setupScript: |
+    mkdir -p /root/workspace
+    cat <<'EOF' > /root/workspace/index.html
+    status-ok
+    EOF
+    cat <<'EOF' > /root/workspace/Dockerfile
+    FROM busybox:1.36
+    WORKDIR /www
+    COPY site/index.html /www/index.html
+    CMD ["httpd", "-f", "-p", "80", "-h", "/www"]
+    EOF
+
+hiddenState:
+  - "The Dockerfile's COPY line references a 'site/' subdirectory that doesn't exist — index.html sits directly in /root/workspace."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Reproduce the build failure"
+    objective: "Try building the image and read exactly why it fails."
+    briefing: >
+      Don't guess — run the build yourself and read the error. Docker's build
+      output tells you exactly which instruction failed and why.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "Every Dockerfile instruction runs in order, using the build context — the directory you point docker build at."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "Build the image from /root/workspace and read the error output carefully."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: cd /root/workspace && docker build -t statuspage:1.0 ."
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          COPY can only see files inside the build context you pass to
+          docker build. If the path in COPY doesn't exist relative to that
+          context, the build fails before it ever runs a single RUN step.
+        xpCost: 0
+    docRefs: [dockerfile-basics]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+build'
+
+  - id: fix
+    kind: fix
+    title: "Fix the Dockerfile and build it"
+    objective: "Correct the COPY path to match the real workspace layout, then build statuspage:1.0."
+    briefing: >
+      index.html lives directly in /root/workspace, not in a site/
+      subdirectory. Edit the Dockerfile's COPY line to match reality, then build.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "The fix is a one-line edit: point COPY at the file where it actually is."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Edit the Dockerfile so the COPY source is just index.html, not site/index.html. Then rebuild."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: nano Dockerfile (change the COPY line to 'COPY index.html /www/index.html'), then docker build -t statuspage:1.0 ."
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          nano lets you edit the file interactively inside the sandbox. You
+          could also use sed -i 's|site/index.html|index.html|' Dockerfile
+          for the same one-line fix without an editor.
+        xpCost: 0
+    docRefs: [dockerfile-basics, images-pull-tag]
+    completionConditions:
+      - type: image_exists
+        repository: statuspage
+        tag: "1.0"
+
+  - id: verify
+    kind: verify
+    title: "Run it and confirm"
+    objective: "Run the new image and prove it's serving the real status page content."
+    briefing: "A build that succeeds isn't the same as an image that works. Run it and check the actual content."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Run a container from statuspage:1.0 named status, then check the file it's serving."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker run -d --name status -p 8080:80 statuspage:1.0, then docker exec status cat /www/index.html"
+        xpCost: 5
+    docRefs: [dockerfile-basics, containers-run]
+    completionConditions:
+      - type: container_state
+        target: status
+        equals: running
+      - type: container_image
+        target: status
+        equals: statuspage:1.0
+      - type: exec_output_contains
+        target: status
+        command: ["docker", "exec", "status", "cat", "/www/index.html"]
+        contains: "status-ok"
+
+winCondition:
+  - type: image_exists
+    repository: statuspage
+    tag: "1.0"
+  - type: container_state
+    target: status
+    equals: running
+  - type: container_image
+    target: status
+    equals: statuspage:1.0
+  - type: exec_output_contains
+    target: status
+    command: ["docker", "exec", "status", "cat", "/www/index.html"]
+    contains: "status-ok"
+
+failureConditions: []
+
+achievements:
+  - id: dockerfile-debugger
+    title: "Dockerfile Debugger"
+    description: "Diagnosed and fixed a broken COPY path in a real docker build."
+  - id: first-build
+    title: "First Build"
+    description: "Built and ran your first image from your own Dockerfile."

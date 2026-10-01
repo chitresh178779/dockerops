@@ -1,0 +1,246 @@
+metadata:
+  id: production-deployment
+  order: 10
+  title: "Three Things Wrong at Once"
+  concept: "integrated-troubleshooting"
+  difficulty: capstone
+  estimatedMinutes: 50
+  prerequisites: [scaling-operations]
+  xpReward: 280
+  commandFamilies: [container-lifecycle, images, networking, storage, inspection]
+  learningGoals:
+    - "Combine multiple Docker concepts"
+    - "Triage a multi-fault incident"
+    - "Restore full production service"
+
+narrative:
+  role: "You're on-call for prod-01, and this one's bad. Everything you've learned so far is about to matter at once."
+  incident: >
+    A three-tier deploy went out overnight: frontend, backend, and cache.
+    Nothing paged, because nothing outright crashed — but the stack is broken
+    in three separate, independent ways, and customers are already noticing.
+  symptoms:
+    - "frontend is running the wrong nginx tag — not the one the release notes promised."
+    - "frontend was never connected to app-net, so it can't reach anything else in the stack."
+    - "backend is writing to /data, but that path was never mounted to the backend-data volume that exists for exactly this purpose."
+  missionBrief: >
+    Triage the whole stack first. Then fix all three faults — the image tag,
+    the missing network connection, and the missing volume mount — and prove
+    the stack works end to end.
+  timeline:
+    - "02:00 — Overnight deploy script pulls a stale local tag for frontend instead of the intended release."
+    - "02:00 — frontend gets started without --network, same script bug as an old incident nobody fully fixed."
+    - "02:01 — backend gets started without its volume mount; the deploy template for it was never finished."
+    - "08:30 — First customer report comes in. Nothing in the dashboard looks obviously down."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: nginx
+      tag: "1.19"
+      pull: true
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+    - repository: redis
+      tag: "7-alpine"
+      pull: true
+  networks:
+    - name: app-net
+      driver: bridge
+  volumes:
+    - name: backend-data
+  containers:
+    - name: frontend
+      image: nginx:1.19
+      startState: running
+      env: {}
+      networks: []
+      volumes: []
+      ports:
+        - containerPort: 80
+          hostPort: 8080
+    - name: backend
+      image: busybox:1.36
+      command: ["sh", "-c", "mkdir -p /data && sleep 3600"]
+      startState: running
+      env: {}
+      networks: [app-net]
+      volumes: []
+      ports: []
+    - name: cache
+      image: redis:7-alpine
+      startState: running
+      env: {}
+      networks: [app-net]
+      volumes: []
+      ports: []
+
+hiddenState:
+  - "frontend is running nginx:1.19; the release was supposed to ship nginx:1.25."
+  - "frontend has never been connected to app-net, so it can't reach backend or cache."
+  - "backend and cache already share app-net, but backend has no volume mounted at /data."
+  - "backend-data exists as a volume but has never been attached to any container."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Triage the whole stack"
+    objective: "Inspect every service and the host's networks before changing anything."
+    briefing: >
+      Three independent faults means three independent things to check. Look
+      at frontend's actual image, backend's actual mounts, and what networks
+      exist on the host — don't fix anything until you've confirmed all three.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "Treat this like a real incident: a full symptom list up front is worth more than guessing at fixes one at a time."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "Inspect frontend, inspect backend, and list the host's networks."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker inspect frontend, then docker inspect backend, then docker network ls"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker inspect frontend shows nginx:1.19 and an empty Networks map.
+          docker inspect backend shows an empty Mounts array. docker network
+          ls confirms app-net already exists — frontend just isn't on it.
+        xpCost: 0
+    docRefs: [images-pull-tag, networking-basics, volumes-basics, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+inspect\s+.*frontend'
+      - type: command_used
+        pattern: 'docker\s+inspect\s+.*backend'
+      - type: command_used
+        pattern: 'docker\s+network\s+ls'
+
+  - id: fix
+    kind: fix
+    title: "Fix all three faults"
+    objective: "Redeploy frontend on the correct tag and connected to app-net, and redeploy backend with backend-data mounted at /data."
+    briefing: >
+      frontend needs a full redeploy (image tags aren't swappable in place)
+      onto nginx:1.25, published on the same port, and connected to app-net.
+      backend also needs a full redeploy so backend-data actually backs /data.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "An image tag and a volume mount are both fixed at container creation — neither can change on a running container without recreating it. A network attachment is the one you can fix in place."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Pull nginx:1.25, recreate frontend from it on app-net with the same port, and recreate backend with backend-data mounted at /data."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: docker pull nginx:1.25, then docker rm -f frontend, then docker run -d --name frontend --network app-net -p 8080:80 nginx:1.25 — and separately: docker rm -f backend, then docker run -d --name backend --network app-net -v backend-data:/data busybox:1.36 sh -c \"mkdir -p /data && sleep 3600\""
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          Both redeploys need --network app-net explicitly, since neither
+          container inherits its predecessor's network attachment — every
+          flag has to be restated on the new container.
+        xpCost: 0
+    docRefs: [images-pull-tag, networking-basics, volumes-basics, containers-run]
+    completionConditions:
+      - type: container_image
+        target: frontend
+        equals: nginx:1.25
+      - type: container_state
+        target: frontend
+        equals: running
+      - type: network_connected
+        container: frontend
+        network: app-net
+        connected: true
+      - type: network_connected
+        container: backend
+        network: app-net
+        connected: true
+      - type: volume_mounted
+        container: backend
+        volume: backend-data
+        mountPath: /data
+      - type: container_state
+        target: backend
+        equals: running
+
+  - id: verify
+    kind: verify
+    title: "Confirm the whole stack, end to end"
+    objective: "Prove frontend is on the right version, reachable, and that backend can reach cache."
+    briefing: >
+      Check all three independently: frontend's real version, cache
+      responding to a real ping, and backend able to reach cache by name over
+      the network you just fixed.
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Check frontend's nginx version, ping cache directly, and confirm backend can reach cache by name."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: 'Try: docker exec frontend nginx -v, then docker exec cache redis-cli ping, then docker exec backend sh -c "nc -z cache 6379 && echo reachable"'
+        xpCost: 10
+    docRefs: [troubleshooting-health, networking-basics, images-pull-tag]
+    completionConditions:
+      - type: exec_output_contains
+        target: frontend
+        command: ["docker", "exec", "frontend", "nginx", "-v"]
+        contains: "1.25"
+      - type: exec_output_contains
+        target: cache
+        command: ["docker", "exec", "cache", "redis-cli", "ping"]
+        contains: "PONG"
+      - type: exec_output_contains
+        target: backend
+        command: ["docker", "exec", "backend", "sh", "-c", "nc -z cache 6379 && echo reachable"]
+        contains: "reachable"
+      - type: http_status
+        hostPort: 8080
+        path: /
+        equals: 200
+
+winCondition:
+  - type: container_image
+    target: frontend
+    equals: nginx:1.25
+  - type: container_state
+    target: frontend
+    equals: running
+  - type: network_connected
+    container: frontend
+    network: app-net
+    connected: true
+  - type: volume_mounted
+    container: backend
+    volume: backend-data
+    mountPath: /data
+  - type: container_state
+    target: backend
+    equals: running
+  - type: exec_output_contains
+    target: cache
+    command: ["docker", "exec", "cache", "redis-cli", "ping"]
+    contains: "PONG"
+  - type: http_status
+    hostPort: 8080
+    path: /
+    equals: 200
+
+failureConditions: []
+
+achievements:
+  - id: full-stack-fixer
+    title: "Full Stack Fixer"
+    description: "Diagnosed and fixed three independent faults across a multi-container stack in one incident."
+  - id: capstone-graduate
+    title: "Capstone Graduate"
+    description: "Completed DockerOps' capstone incident and closed it clean."

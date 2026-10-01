@@ -1,0 +1,186 @@
+metadata:
+  id: compose
+  order: 6
+  title: "Half a Stack"
+  concept: "compose-and-multi-container"
+  difficulty: medium
+  estimatedMinutes: 35
+  prerequisites: [dockerfile]
+  xpReward: 170
+  commandFamilies: [compose, networking, inspection]
+  learningGoals:
+    - "Define multi-container apps"
+    - "Bring services up and down together"
+    - "Debug with compose logs"
+
+narrative:
+  role: "You're on-call for prod-01. Someone else's compose file is already in the workspace."
+  incident: >
+    A docker-compose.yml in /root/workspace defines a tiny two-service stack:
+    web and worker. worker is supposed to pull data from web on every job,
+    but every call fails — worker was left off the network web is on.
+  symptoms:
+    - "docker compose up brings both services up without any error."
+    - "worker can't resolve or reach web by name at all."
+  missionBrief: >
+    Bring the stack up, find the missing network attachment in the compose
+    file, fix it, and reapply until worker can really talk to web.
+  timeline:
+    - "11:00 — docker-compose.yml written with web on a custom network."
+    - "11:02 — worker's network block gets left out during a copy-paste."
+    - "11:10 — First job fails silently; nobody's watching the logs yet."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+  networks: []
+  volumes: []
+  containers: []
+  setupScript: |
+    mkdir -p /root/workspace
+    cat <<'EOF' > /root/workspace/docker-compose.yml
+    services:
+      web:
+        image: busybox:1.36
+        container_name: compose-web
+        command: sh -c "mkdir -p /www && echo compose-web-ok > /www/index.html && httpd -f -p 80 -h /www"
+        networks: [appnet]
+      worker:
+        image: busybox:1.36
+        container_name: compose-worker
+        command: sh -c "sleep 3600"
+    networks:
+      appnet:
+        name: appnet
+        driver: bridge
+    EOF
+
+hiddenState:
+  - "worker's service block in docker-compose.yml has no networks: entry, so compose puts it on the default network only — not appnet, where web lives."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Bring the stack up and reproduce the failure"
+    objective: "Start the stack with compose, check its status, and confirm worker really can't reach web."
+    briefing: >
+      Bring the stack up exactly as written first — don't fix anything yet.
+      Seeing the real failure live is faster than guessing from the YAML alone.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "docker compose up reads docker-compose.yml and creates every declared network, then every declared service."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "From /root/workspace, bring the stack up, check its status, then try reaching web from worker."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: cd /root/workspace && docker compose up -d, then docker compose ps, then docker exec compose-worker wget -qO- http://compose-web/"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          A service with no networks: key in a compose file still gets a
+          network — just the project's implicit default one, not whichever
+          custom network you declared for the other service.
+        xpCost: 0
+    docRefs: [compose-basics, networking-basics]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+compose\s+up'
+      - type: command_used
+        pattern: 'docker\s+compose\s+ps'
+
+  - id: fix
+    kind: fix
+    title: "Fix the compose file"
+    objective: "Add worker to appnet in docker-compose.yml, then reapply the stack."
+    briefing: >
+      Edit docker-compose.yml so worker's service block also lists appnet
+      under networks, matching web. Then reapply so compose picks up the change.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "Compose won't reconnect a running container to a new network on its own — you have to edit the file and reapply."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Add a 'networks: [appnet]' line under worker's service block, then run docker compose up -d again."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: nano docker-compose.yml (add 'networks: [appnet]' under worker), then docker compose up -d"
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          docker compose up -d is safe to re-run — it only recreates services
+          whose configuration actually changed, so web keeps running
+          untouched while worker gets rebuilt onto appnet.
+        xpCost: 0
+    docRefs: [compose-basics, networking-basics]
+    completionConditions:
+      - type: network_connected
+        container: compose-worker
+        network: appnet
+        connected: true
+      - type: network_connected
+        container: compose-web
+        network: appnet
+        connected: true
+
+  - id: verify
+    kind: verify
+    title: "Confirm the stack works end to end"
+    objective: "Prove worker can now reach web by name, and both services are still up."
+    briefing: "Re-run the exact call that failed in the investigate step and confirm it comes back with web's real content."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Try the same request from worker to web again."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker exec compose-worker wget -qO- http://compose-web/"
+        xpCost: 5
+    docRefs: [compose-basics, networking-basics]
+    completionConditions:
+      - type: exec_output_contains
+        target: compose-worker
+        command: ["docker", "exec", "compose-worker", "wget", "-qO-", "http://compose-web/"]
+        contains: "compose-web-ok"
+      - type: container_state
+        target: compose-web
+        equals: running
+      - type: container_state
+        target: compose-worker
+        equals: running
+
+winCondition:
+  - type: network_connected
+    container: compose-worker
+    network: appnet
+    connected: true
+  - type: network_connected
+    container: compose-web
+    network: appnet
+    connected: true
+  - type: exec_output_contains
+    target: compose-worker
+    command: ["docker", "exec", "compose-worker", "wget", "-qO-", "http://compose-web/"]
+    contains: "compose-web-ok"
+
+failureConditions: []
+
+achievements:
+  - id: compose-fixer
+    title: "Compose Fixer"
+    description: "Found and fixed a missing network attachment in a real docker-compose.yml."
+  - id: stack-online
+    title: "Stack Online"
+    description: "Brought a multi-service compose stack up and proved every service can talk to the others."

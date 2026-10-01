@@ -1,0 +1,188 @@
+metadata:
+  id: scaling-operations
+  order: 9
+  title: "One Worker, Too Many Jobs"
+  concept: "scaling-and-operations"
+  difficulty: hard
+  estimatedMinutes: 35
+  prerequisites: [security]
+  xpReward: 220
+  commandFamilies: [container-lifecycle, networking, system]
+  learningGoals:
+    - "Run multiple instances of a service"
+    - "Reason about horizontal scaling"
+    - "Apply resource limits"
+
+narrative:
+  role: "You're on-call for prod-01. The job queue is backing up fast."
+  incident: >
+    worker-1 is the only container processing jobs off the queue, and it's
+    falling further behind by the minute. This engine doesn't have an
+    orchestrator to auto-scale for you — scaling out means running more
+    named containers yourself, on the same network, right now.
+  symptoms:
+    - "worker-1 is running, alone, with no resource limits set."
+    - "The job backlog keeps growing faster than one worker can drain it."
+  missionBrief: >
+    Stand up two more workers — worker-2 and worker-3 — on the same network
+    as worker-1, so the queue can actually be drained in parallel.
+  timeline:
+    - "07:00 — worker-1 deployed as the only consumer of the job queue."
+    - "07:45 — Job volume triples after a marketing push. worker-1 alone can't keep up."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+  networks:
+    - name: app-net
+      driver: bridge
+  volumes: []
+  containers:
+    - name: worker-1
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      startState: running
+      env: {}
+      networks: [app-net]
+      volumes: []
+      ports: []
+
+hiddenState:
+  - "worker-1 has no memory or CPU limits set, and it's the only container draining the queue."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Confirm the bottleneck"
+    objective: "Check how many workers are actually running, and inspect worker-1's configuration."
+    briefing: >
+      Before scaling anything, confirm exactly what's running right now —
+      one worker with no resource limits, carrying the entire load alone.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "This engine has no orchestrator to scale replicas for you automatically. 'Scaling out' here means running more named containers yourself."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "List running containers, then inspect worker-1 to see its full config."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker ps, then docker inspect worker-1"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker inspect worker-1 confirms it's alone on app-net with no
+          memory limit set — one process absorbing all the load with nothing
+          to stop it from being overwhelmed.
+        xpCost: 0
+    docRefs: [containers-inspecting, networking-basics]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+ps'
+      - type: command_used
+        pattern: 'docker\s+inspect\s+.*worker-1'
+
+  - id: fix
+    kind: fix
+    title: "Scale out to three workers"
+    objective: "Run worker-2 and worker-3 on app-net alongside worker-1, using the same image."
+    briefing: >
+      Each new worker needs its own name, the same image, and app-net so all
+      three can coordinate on the same network.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "Poor-man's horizontal scaling: run more containers from the same image, with distinct names, on the same network."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Run two more busybox containers named worker-2 and worker-3, both attached to app-net."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: 'Try: docker run -d --name worker-2 --network app-net busybox:1.36 sh -c "sleep 3600", then the same for worker-3'
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          Once all three share app-net, they're peers that can resolve and
+          reach each other by name if the workload ever needs to coordinate
+          between them — the same mechanism you used back in the networking incident.
+        xpCost: 0
+    docRefs: [containers-run, networking-basics]
+    completionConditions:
+      - type: container_state
+        target: worker-2
+        equals: running
+      - type: container_state
+        target: worker-3
+        equals: running
+      - type: network_connected
+        container: worker-2
+        network: app-net
+        connected: true
+      - type: network_connected
+        container: worker-3
+        network: app-net
+        connected: true
+
+  - id: verify
+    kind: verify
+    title: "Confirm the fleet is up"
+    objective: "Verify all three workers are running and sharing app-net."
+    briefing: "Take one more look across the whole fleet before you consider this incident closed."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "List running containers one more time — you should see all three workers."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker ps"
+        xpCost: 5
+    docRefs: [containers-inspecting]
+    completionConditions:
+      - type: container_state
+        target: worker-1
+        equals: running
+      - type: container_state
+        target: worker-2
+        equals: running
+      - type: container_state
+        target: worker-3
+        equals: running
+
+winCondition:
+  - type: container_state
+    target: worker-1
+    equals: running
+  - type: container_state
+    target: worker-2
+    equals: running
+  - type: container_state
+    target: worker-3
+    equals: running
+  - type: network_connected
+    container: worker-2
+    network: app-net
+    connected: true
+  - type: network_connected
+    container: worker-3
+    network: app-net
+    connected: true
+
+failureConditions: []
+
+achievements:
+  - id: horizontal-scaler
+    title: "Horizontal Scaler"
+    description: "Scaled a service out to multiple named replicas on a shared network."
+  - id: fleet-online
+    title: "Fleet Online"
+    description: "Brought a full worker fleet up and confirmed every instance was healthy."

@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  displayName String
+  email       String?  @unique
+  totalXp     Int      @default(0)
+  streakDays  Int      @default(0)
+  lastPlayedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  levelProgress   LevelProgress[]
+  attempts        MissionAttempt[]
+  achievements    UserAchievement[]
+  sessions        GameSession[]
+}
+
+enum LevelStatus {
+  LOCKED
+  UNLOCKED
+  COMPLETED
+}
+
+model LevelProgress {
+  id          String      @id @default(uuid())
+  userId      String
+  levelId     String
+  status      LevelStatus @default(LOCKED)
+  bestScore   Int?
+  hintsUsed   Int         @default(0)
+  attempts    Int         @default(0)
+  completedAt DateTime?
+  updatedAt   DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, levelId])
+}
+
+enum AttemptOutcome {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model MissionAttempt {
+  id             String         @id @default(uuid())
+  userId         String
+  levelId        String
+  startedAt      DateTime       @default(now())
+  endedAt        DateTime?
+  hintsUsed      Int            @default(0)
+  commandsRun    Int            @default(0)
+  xpEarned       Int            @default(0)
+  score          Int            @default(0)
+  outcome        AttemptOutcome @default(IN_PROGRESS)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session GameSession?
+}
+
+model Achievement {
+  id          String @id
+  title       String
+  description String
+
+  unlockedBy UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+}
+
+enum SessionStatus {
+  PROVISIONING
+  READY
+  ERROR
+  DESTROYED
+}
+
+model GameSession {
+  id                 String        @id @default(uuid())
+  userId             String
+  levelId            String
+  attemptId          String?       @unique
+  sandboxContainerId String?
+  status             SessionStatus @default(PROVISIONING)
+  currentPartId      String?
+  createdAt          DateTime      @default(now())
+  endedAt            DateTime?
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt  MissionAttempt?  @relation(fields: [attemptId], references: [id])
+  commands CommandLogEntry[]
+}
+
+model CommandLogEntry {
+  id        String   @id @default(uuid())
+  sessionId String
+  command   String
+  exitCode  Int?
+  ranAt     DateTime @default(now())
+
+  session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}

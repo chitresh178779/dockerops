@@ -1,0 +1,160 @@
+metadata:
+  id: containers-basics
+  order: 1
+  title: "First Watch"
+  concept: "container-lifecycle"
+  difficulty: intro
+  estimatedMinutes: 25
+  prerequisites: []
+  xpReward: 100
+  commandFamilies: [container-lifecycle, inspection]
+  learningGoals:
+    - "Run and manage containers"
+    - "Inspect stopped containers"
+    - "Clean up stale resources"
+
+narrative:
+  role: "You're the newly hired on-call engineer for prod-01."
+  incident: >
+    The previous on-call engineer left mid-shift. Their handoff notes just say
+    "web app never got deployed, and I think I left a mess." You have shell
+    access to prod-01. Nothing is currently serving traffic.
+  symptoms:
+    - "No container is currently running on prod-01."
+    - "The handoff notes mention a container that 'wouldn't stay up'."
+  missionBrief: >
+    Find what state the host is really in, launch the web service correctly,
+    and clean up whatever your predecessor left behind.
+  timeline:
+    - "08:55 — Previous engineer starts web-old, it exits almost immediately."
+    - "09:00 — Previous engineer clocks out without redeploying."
+    - "09:04 — You take over prod-01."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: nginx
+      tag: "1.25"
+      pull: true
+  networks: []
+  volumes: []
+  containers:
+    - name: web-old
+      image: nginx:1.25
+      startState: exited
+      env: {}
+      networks: []
+      volumes: []
+      ports: []
+
+hiddenState:
+  - "web-old exists but is stopped; its exit reason is only visible via docker ps -a and docker logs."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Survey the host"
+    objective: "Find every container on prod-01, including stopped ones."
+    briefing: >
+      `docker ps` only shows running containers. If a container isn't running,
+      you have to ask Docker to show you everything, including exited ones.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "docker ps only shows the running slice of the truth. Docker still remembers containers that exited."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "There's a flag that reveals stopped and exited containers too."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker ps -a"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker ps -a lists containers in every state Docker still tracks:
+          running, exited, created. Docker keeps a stopped container's
+          filesystem and metadata around until you docker rm it.
+        xpCost: 0
+    docRefs: [containers-lifecycle, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: "^docker ps( .*)?-a|^docker ps( .*)?--all"
+
+  - id: fix
+    kind: fix
+    title: "Deploy and clean up"
+    objective: "Run the web service and remove the stale container your predecessor left behind."
+    briefing: >
+      Launch nginx as the web service, confirm it's actually running, then
+      remove web-old so it doesn't confuse the next engineer.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "A container has to be created AND started to serve traffic. docker run does both in one step."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Start a new nginx container named 'web', running in the background."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: docker run -d --name web nginx:1.25"
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          -d detaches so the container runs in the background instead of
+          attaching your terminal to it. Once it's up, remove the dead
+          container with docker rm web-old (add -f only if it's still running).
+        xpCost: 0
+    docRefs: [containers-run, containers-lifecycle]
+    completionConditions:
+      - type: container_state
+        target: web
+        equals: running
+      - type: container_state
+        target: web-old
+        equals: absent
+
+  - id: verify
+    kind: verify
+    title: "Confirm the deploy"
+    objective: "Prove the web service is healthy and the host is clean."
+    briefing: "Take one more look at the host the way an on-call engineer would before closing the incident."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Check the running containers one more time — only 'web' should be there."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker ps"
+        xpCost: 5
+    docRefs: [containers-inspecting]
+    completionConditions:
+      - type: container_state
+        target: web
+        equals: running
+      - type: command_used
+        pattern: "^docker ps($| [^-].*$|--)"
+
+winCondition:
+  - type: container_state
+    target: web
+    equals: running
+  - type: container_state
+    target: web-old
+    equals: absent
+
+failureConditions: []
+
+achievements:
+  - id: first-deploy
+    title: "First Deploy"
+    description: "Ran your first container in DockerOps."
+  - id: clean-host
+    title: "Leave No Trace"
+    description: "Removed a stray container instead of leaving it behind."

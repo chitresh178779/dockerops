@@ -1,0 +1,184 @@
+metadata:
+  id: volumes
+  order: 4
+  title: "The Vanishing Uploads"
+  concept: "volumes-and-persistence"
+  difficulty: medium
+  estimatedMinutes: 30
+  prerequisites: [networking]
+  xpReward: 140
+  commandFamilies: [storage, container-lifecycle, inspection]
+  learningGoals:
+    - "Create and use volumes"
+    - "Mount volumes into containers"
+    - "Confirm data survives a restart"
+
+narrative:
+  role: "You're on-call for prod-01. Support just escalated a data-loss complaint."
+  incident: >
+    A customer's order log vanished after the last redeploy of 'app'. A
+    volume named uploads-data exists on this host — it was created for
+    exactly this purpose — but nobody ever actually mounted it into the
+    container that needs it.
+  symptoms:
+    - "app is running, and has written data straight into its own container filesystem."
+    - "An unused volume called uploads-data already exists on the host."
+  missionBrief: >
+    Confirm the data really isn't on a volume, redeploy app with uploads-data
+    correctly mounted, and prove new data now survives a redeploy.
+  timeline:
+    - "09:00 — app deployed without a -v flag."
+    - "09:15 — An order gets written to /data/orders.log inside app's writable layer."
+    - "09:40 — app gets redeployed for an unrelated config change. The order log is gone."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+  networks: []
+  volumes:
+    - name: uploads-data
+  containers:
+    - name: app
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep 3600"]
+      startState: running
+      env: {}
+      networks: []
+      volumes: []
+      ports: []
+  setupScript: |
+    docker exec app sh -c "mkdir -p /data && echo order-42 > /data/orders.log"
+
+hiddenState:
+  - "orders.log exists inside app's writable container layer, not on any volume."
+  - "uploads-data was created but has never been mounted into any container."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Find out where the data really lives"
+    objective: "Confirm orders.log exists, then check whether it's actually backed by a volume."
+    briefing: >
+      The file is there right now — that's not the question. The question is
+      whether it would survive app being removed and recreated.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "A container's own writable layer disappears forever the moment the container is removed. Only data on a volume survives that."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "Read the file to confirm it exists, then list the host's volumes to see what's available but unused."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker exec app cat /data/orders.log, then docker volume ls"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker inspect app would also show its Mounts array is empty for
+          /data — proof this container has no volume backing that path at all.
+        xpCost: 0
+    docRefs: [volumes-basics, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+exec\s+app\s+cat\s+/data/orders\.log'
+      - type: command_used
+        pattern: 'docker\s+volume\s+ls'
+
+  - id: fix
+    kind: fix
+    title: "Mount the volume correctly"
+    objective: "Redeploy app with uploads-data mounted at /data, the path the app actually writes to."
+    briefing: >
+      The orders.log written before this point can't be recovered — it was
+      never on durable storage. Your job now is to make sure this never
+      happens again: redeploy with the volume mounted at the right path.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "Mounting a volume into a running container isn't a thing — you recreate the container with -v pointed at the right path."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Remove app, then run it again with uploads-data mounted at /data."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: docker rm -f app, then docker run -d --name app -v uploads-data:/data busybox:1.36 sleep 3600"
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          Now /data is backed by the uploads-data volume. Anything written
+          there lives outside the container's own filesystem, so it survives
+          the container being removed and recreated.
+        xpCost: 0
+    docRefs: [volumes-basics, containers-run]
+    completionConditions:
+      - type: volume_exists
+        target: uploads-data
+      - type: volume_mounted
+        container: app
+        volume: uploads-data
+        mountPath: /data
+      - type: container_state
+        target: app
+        equals: running
+
+  - id: verify
+    kind: verify
+    title: "Prove data survives a redeploy"
+    objective: "Write a new file to /data, redeploy app again, and confirm the file is still there."
+    briefing: >
+      Talk is cheap. Write something new, tear the container down, bring it
+      back up the same way, and read the file back to prove persistence for real.
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Write a marker file into /data, remove and recreate app with the same volume mount, then read the file back."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: 'Try: docker exec app sh -c "echo still-here > /data/survives.txt", then docker rm -f app, then docker run -d --name app -v uploads-data:/data busybox:1.36 sleep 3600, then docker exec app cat /data/survives.txt'
+        xpCost: 10
+    docRefs: [volumes-basics, containers-lifecycle]
+    completionConditions:
+      - type: exec_output_contains
+        target: app
+        command: ["docker", "exec", "app", "cat", "/data/survives.txt"]
+        contains: "still-here"
+      - type: volume_mounted
+        container: app
+        volume: uploads-data
+        mountPath: /data
+      - type: container_state
+        target: app
+        equals: running
+
+winCondition:
+  - type: volume_mounted
+    container: app
+    volume: uploads-data
+    mountPath: /data
+  - type: container_state
+    target: app
+    equals: running
+  - type: exec_output_contains
+    target: app
+    command: ["docker", "exec", "app", "cat", "/data/survives.txt"]
+    contains: "still-here"
+
+failureConditions: []
+
+achievements:
+  - id: data-survivor
+    title: "Data Survivor"
+    description: "Proved that data written to a volume survives a full container redeploy."
+  - id: volume-master
+    title: "Volume Master"
+    description: "Correctly mounted a named volume at the exact path an app expects."

@@ -1,0 +1,173 @@
+metadata:
+  id: security
+  order: 8
+  title: "Root by Default"
+  concept: "security-and-least-privilege"
+  difficulty: medium
+  estimatedMinutes: 30
+  prerequisites: [production-troubleshooting]
+  xpReward: 180
+  commandFamilies: [container-lifecycle, inspection, system]
+  learningGoals:
+    - "Run containers as non-root"
+    - "Spot secrets leaking via inspect"
+    - "Apply least-privilege flags"
+
+narrative:
+  role: "You're on-call for prod-01. A security audit just flagged 'billing'."
+  incident: >
+    'billing' has been running as root since it was first deployed, with no
+    one ever questioning it, and its filesystem is fully writable — meaning
+    a compromised process inside it could tamper with anything in its own container.
+  symptoms:
+    - "billing runs every process as uid 0 (root) inside the container."
+    - "billing's root filesystem is fully writable, with no reason for it to be."
+  missionBrief: >
+    Redeploy billing to run as a non-root user with a read-only root
+    filesystem, and prove both restrictions are actually in effect.
+  timeline:
+    - "Original deploy — nobody set --user or --read-only, so both defaulted to the least secure option."
+    - "Today — a routine security audit flags billing as running with unnecessary privilege."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: alpine
+      tag: "3.20"
+      pull: true
+  networks: []
+  volumes: []
+  containers:
+    - name: billing
+      image: alpine:3.20
+      command: ["sleep", "3600"]
+      startState: running
+      env:
+        DB_PASSWORD: "hunter2plaintext"
+      networks: []
+      volumes: []
+      ports: []
+
+hiddenState:
+  - "billing runs as root (uid 0) with no --user set."
+  - "billing has a fully writable root filesystem — no --read-only set."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Audit billing"
+    objective: "Confirm what user billing actually runs as, and what its configuration looks like."
+    briefing: >
+      Don't assume — check the actual uid the container's process is running
+      as, and inspect its full configuration for anything else worth flagging.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "A container runs as root by default unless you explicitly tell it otherwise with --user. That's true no matter what's in the image."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "Check the uid billing's process is running as, and inspect its full container config."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker exec billing id, then docker inspect billing"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker inspect billing's Config.Env will also show DB_PASSWORD in
+          plaintext — anyone with docker inspect access to this host can read
+          it. Baking secrets into env vars at deploy time is visible to
+          anyone who can inspect the container.
+        xpCost: 0
+    docRefs: [security-basics, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+exec\s+billing\s+id'
+      - type: command_used
+        pattern: 'docker\s+inspect\s+.*billing'
+
+  - id: fix
+    kind: fix
+    title: "Redeploy least-privilege"
+    objective: "Recreate billing running as a non-root user with a read-only root filesystem."
+    briefing: >
+      Remove billing and run it again with --user set to a non-root uid and
+      --read-only set on the root filesystem.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "--user pins the process to a specific uid instead of root. --read-only makes the whole root filesystem immutable at runtime."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Recreate billing with --user 1000:1000 and --read-only."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: docker rm -f billing, then docker run -d --name billing --user 1000:1000 --read-only -e DB_PASSWORD=hunter2plaintext alpine:3.20 sleep 3600"
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          With --user 1000:1000, any process inside the container that tries
+          to do something requiring root will simply fail — a real reduction
+          in blast radius if that process is ever compromised.
+        xpCost: 0
+    docRefs: [security-basics, containers-run]
+    completionConditions:
+      - type: container_state
+        target: billing
+        equals: running
+      - type: exec_output_contains
+        target: billing
+        command: ["docker", "exec", "billing", "id", "-u"]
+        contains: "1000"
+
+  - id: verify
+    kind: verify
+    title: "Prove the restrictions hold"
+    objective: "Confirm billing really can't write to its own root filesystem anymore."
+    briefing: "Try to write a file to the container's root filesystem. It should fail, not silently succeed."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Try creating a file inside billing's own filesystem and see what happens."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: 'Try: docker exec billing sh -c "touch /testfile 2>&1"'
+        xpCost: 5
+    docRefs: [security-basics]
+    completionConditions:
+      - type: exec_output_contains
+        target: billing
+        command: ["docker", "exec", "billing", "sh", "-c", "touch /testfile 2>&1"]
+        contains: "Read-only file system"
+      - type: container_state
+        target: billing
+        equals: running
+
+winCondition:
+  - type: container_state
+    target: billing
+    equals: running
+  - type: exec_output_contains
+    target: billing
+    command: ["docker", "exec", "billing", "id", "-u"]
+    contains: "1000"
+  - type: exec_output_contains
+    target: billing
+    command: ["docker", "exec", "billing", "sh", "-c", "touch /testfile 2>&1"]
+    contains: "Read-only file system"
+
+failureConditions: []
+
+achievements:
+  - id: least-privilege
+    title: "Least Privilege"
+    description: "Redeployed a container to run as a non-root user instead of defaulting to root."
+  - id: read-only-defender
+    title: "Read-Only Defender"
+    description: "Locked down a container's root filesystem and proved it actually held."

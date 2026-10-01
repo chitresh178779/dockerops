@@ -1,0 +1,171 @@
+metadata:
+  id: production-troubleshooting
+  order: 7
+  title: "Running Isn't Healthy"
+  concept: "troubleshooting-and-health"
+  difficulty: hard
+  estimatedMinutes: 40
+  prerequisites: [compose]
+  xpReward: 190
+  commandFamilies: [inspection, container-lifecycle, system]
+  learningGoals:
+    - "Read container health status"
+    - "Diagnose failures from logs"
+    - "Fix a misconfigured service"
+
+narrative:
+  role: "You're on-call for prod-01. The dashboard is lying to you, sort of."
+  incident: >
+    'api' shows as running. It has been running for twenty minutes. It is
+    also completely broken — every health check against it is failing, and
+    nobody has looked past the green "running" indicator yet.
+  symptoms:
+    - "docker ps shows api as Up, but its health status is unhealthy."
+    - "A recent config change added a LISTEN_PORT environment variable — the healthcheck was never updated to match."
+  missionBrief: >
+    Find out exactly why api is unhealthy, recreate it with the port and
+    healthcheck actually aligned, and confirm it goes healthy for real.
+  timeline:
+    - "13:00 — api redeployed with LISTEN_PORT=9090 as an override for a canary test."
+    - "13:00 — The canary override never got reverted."
+    - "13:01 — The healthcheck, still pointed at port 8080, starts failing every 2 seconds."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: busybox
+      tag: "1.36"
+      pull: true
+  networks: []
+  volumes: []
+  containers:
+    - name: api
+      image: busybox:1.36
+      command: ["sh", "-c", "mkdir -p /www && echo api-ok > /www/index.html && httpd -f -p ${LISTEN_PORT:-8080} -h /www"]
+      startState: running
+      env:
+        LISTEN_PORT: "9090"
+      networks: []
+      volumes: []
+      ports: []
+      healthcheck:
+        test: ["wget", "-qO-", "http://localhost:8080/"]
+        intervalSeconds: 2
+        retries: 3
+
+hiddenState:
+  - "api is actually listening on port 9090 because of LISTEN_PORT, but its healthcheck still probes port 8080."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Find the real problem"
+    objective: "Check api's real status, and inspect it to find the port mismatch."
+    briefing: >
+      'Running' only tells you the process hasn't crashed. Check the health
+      status specifically, then dig into the container's config to find
+      what's actually misaligned.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "A healthcheck is Docker probing the container on a schedule. Failing checks flip a container's health from starting to unhealthy — even while it keeps running."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "Check docker ps for the health column, then inspect api's environment and healthcheck configuration."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker ps, then docker inspect api"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker inspect api's Config.Env shows LISTEN_PORT=9090, while its
+          Healthcheck.Test still targets port 8080 — that mismatch is the
+          entire incident.
+        xpCost: 0
+    docRefs: [troubleshooting-health, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+ps'
+      - type: command_used
+        pattern: 'docker\s+inspect\s+.*api'
+
+  - id: fix
+    kind: fix
+    title: "Recreate api aligned"
+    objective: "Redeploy api so LISTEN_PORT and the healthcheck target the same port."
+    briefing: >
+      There are two ways to align them: change LISTEN_PORT back to 8080, or
+      change the healthcheck to probe 9090. Either is valid — just make sure
+      the env var and the healthcheck agree.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "The container's env var and its healthcheck command are independent settings — Docker never cross-checks them for you."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Remove api and recreate it with LISTEN_PORT set back to 8080, keeping the same healthcheck flags."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: 'Try: docker rm -f api, then docker run -d --name api -e LISTEN_PORT=8080 --health-cmd "wget -qO- http://localhost:8080/" --health-interval 2s --health-retries 3 busybox:1.36 sh -c "mkdir -p /www && echo api-ok > /www/index.html && httpd -f -p $LISTEN_PORT -h /www"'
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          You have to restate --health-cmd, --health-interval and
+          --health-retries on the new container — none of that config carries
+          over automatically when you recreate a container under the same name.
+        xpCost: 0
+    docRefs: [troubleshooting-health, containers-run]
+    completionConditions:
+      - type: container_state
+        target: api
+        equals: running
+      - type: container_image
+        target: api
+        equals: busybox:1.36
+
+  - id: verify
+    kind: verify
+    title: "Confirm it's actually healthy"
+    objective: "Wait for the healthcheck to run and confirm api reports healthy, not just running."
+    briefing: "Give the healthcheck a few seconds to cycle, then check the real health status Docker is reporting."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Check api's status again after a few seconds — look specifically at its health, not just whether it's running."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker ps (watch the STATUS column for 'healthy')"
+        xpCost: 5
+    docRefs: [troubleshooting-health]
+    completionConditions:
+      - type: container_health
+        target: api
+        equals: healthy
+      - type: container_state
+        target: api
+        equals: running
+
+winCondition:
+  - type: container_state
+    target: api
+    equals: running
+  - type: container_health
+    target: api
+    equals: healthy
+
+failureConditions: []
+
+achievements:
+  - id: health-detective
+    title: "Health Detective"
+    description: "Found a real root cause behind a container that looked fine but wasn't."
+  - id: root-cause-fixed
+    title: "Root Cause Fixed"
+    description: "Brought a container from unhealthy to truly healthy, not just running."

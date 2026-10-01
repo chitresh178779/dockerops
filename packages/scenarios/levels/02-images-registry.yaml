@@ -1,0 +1,185 @@
+metadata:
+  id: images-registry
+  order: 2
+  title: "Wrong Tag, Wrong Prod"
+  concept: "images-and-registry"
+  difficulty: easy
+  estimatedMinutes: 20
+  prerequisites: [containers-basics]
+  xpReward: 120
+  commandFamilies: [images, container-lifecycle, inspection]
+  learningGoals:
+    - "Pull and tag images"
+    - "Understand image vs. container"
+    - "Roll back a bad deploy"
+
+narrative:
+  role: "You're on-call for prod-01, the same host you cleaned up last shift."
+  incident: >
+    Release notes say "deployed nginx 1.25 with the security patch" but a
+    customer just reported the old bug is still happening. Something doesn't
+    add up between what was promised and what's actually running.
+  symptoms:
+    - "The 'web' container is running and serving traffic on port 8080."
+    - "The deploy ticket says nginx:1.25 was pushed; nobody double-checked the tag that actually landed."
+  missionBrief: >
+    Confirm what image tag is really running, pull the tag that was supposed
+    to ship, and redeploy web so it's actually running what the release notes claim.
+  timeline:
+    - "14:02 — Deploy script runs against a stale local tag cache."
+    - "14:03 — 'web' comes up looking healthy. Nobody checks the version."
+    - "14:47 — Customer reports the patched bug is still reproducible."
+
+environment:
+  hostName: prod-01
+  images:
+    - repository: nginx
+      tag: "1.19"
+      pull: true
+  networks: []
+  volumes: []
+  containers:
+    - name: web
+      image: nginx:1.19
+      startState: running
+      env: {}
+      networks: []
+      volumes: []
+      ports:
+        - containerPort: 80
+          hostPort: 8080
+
+hiddenState:
+  - "web is running nginx:1.19, not the 1.25 the release notes claim."
+  - "nginx:1.25 has never been pulled onto this host."
+
+parts:
+  - id: investigate
+    kind: investigate
+    title: "Check what's actually running"
+    objective: "Find the real image tag behind the 'web' container, and see what tags exist locally."
+    briefing: >
+      A deploy ticket is a claim, not a fact. Ask Docker directly what image
+      and tag 'web' was actually started from, and check your local image
+      cache for what's really available.
+    hints:
+      - id: investigate-hint-1
+        tier: concept
+        text: "A container's image is fixed at the moment it's created — docker ps and docker inspect can both tell you exactly which one."
+        xpCost: 0
+      - id: investigate-hint-2
+        tier: direction
+        text: "List your local images, then inspect 'web' to see the tag it was actually started from."
+        xpCost: 5
+      - id: investigate-hint-3
+        tier: command
+        text: "Try: docker images, then docker inspect web (or docker exec web nginx -v)"
+        xpCost: 10
+      - id: investigate-hint-4
+        tier: explanation
+        text: >
+          docker images shows every image:tag pulled onto this host.
+          docker exec web nginx -v asks the running process itself which
+          version it is — the most trustworthy source of truth there is.
+        xpCost: 0
+    docRefs: [images-pull-tag, containers-inspecting]
+    completionConditions:
+      - type: command_used
+        pattern: 'docker\s+(images|image\s+ls)'
+      - type: command_used
+        pattern: 'docker\s+(inspect|exec)\s+.*web'
+
+  - id: fix
+    kind: fix
+    title: "Pull the right tag and redeploy"
+    objective: "Pull nginx:1.25 and redeploy web to run it, replacing the mistagged container."
+    briefing: >
+      Pulling a tag doesn't change any container already running from the old
+      one. You have to remove the wrong 'web' and start a fresh one from the
+      correct tag, republishing the same port.
+    hints:
+      - id: fix-hint-1
+        tier: concept
+        text: "docker pull only updates your local image cache. Existing containers keep running whatever image they were created from."
+        xpCost: 0
+      - id: fix-hint-2
+        tier: direction
+        text: "Pull nginx:1.25, remove the old web container, then run a new one named web on port 8080 from the correct tag."
+        xpCost: 5
+      - id: fix-hint-3
+        tier: command
+        text: "Try: docker pull nginx:1.25, then docker rm -f web, then docker run -d --name web -p 8080:80 nginx:1.25"
+        xpCost: 10
+      - id: fix-hint-4
+        tier: explanation
+        text: >
+          Removing the old container frees the name and the host port so the
+          replacement can bind cleanly. The image tag is baked into the
+          container at creation time — there's no in-place upgrade.
+        xpCost: 0
+    docRefs: [images-pull-tag, containers-run, containers-lifecycle]
+    completionConditions:
+      - type: image_exists
+        repository: nginx
+        tag: "1.25"
+      - type: container_image
+        target: web
+        equals: nginx:1.25
+      - type: container_state
+        target: web
+        equals: running
+      - type: port_published
+        target: web
+        containerPort: 80
+        hostPort: 8080
+
+  - id: verify
+    kind: verify
+    title: "Prove the version"
+    objective: "Confirm the running container reports 1.25 and the port is actually serving traffic."
+    briefing: "Don't take your own fix on faith — check the version output and the live port the same way you'd verify any deploy."
+    hints:
+      - id: verify-hint-1
+        tier: direction
+        text: "Ask the container itself for its version string, and confirm the port responds."
+        xpCost: 0
+      - id: verify-hint-2
+        tier: command
+        text: "Try: docker exec web nginx -v"
+        xpCost: 5
+    docRefs: [images-pull-tag, containers-inspecting]
+    completionConditions:
+      - type: exec_output_contains
+        target: web
+        command: ["docker", "exec", "web", "nginx", "-v"]
+        contains: "1.25"
+      - type: http_status
+        hostPort: 8080
+        path: /
+        equals: 200
+
+winCondition:
+  - type: container_image
+    target: web
+    equals: nginx:1.25
+  - type: container_state
+    target: web
+    equals: running
+  - type: port_published
+    target: web
+    containerPort: 80
+    hostPort: 8080
+  - type: exec_output_contains
+    target: web
+    command: ["docker", "exec", "web", "nginx", "-v"]
+    contains: "1.25"
+
+failureConditions: []
+
+achievements:
+  - id: tag-detective
+    title: "Tag Detective"
+    description: "Caught a mistagged production deploy before it became a bigger incident."
+  - id: clean-redeploy
+    title: "Clean Redeploy"
+    description: "Replaced a mistagged container with the correct image, cleanly."

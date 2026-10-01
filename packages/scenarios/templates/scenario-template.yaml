@@ -1,0 +1,165 @@
+# ==============================================================================
+# DOCKEROPS — LEVEL SCENARIO TEMPLATE (MAINTAINER / OWNER ONLY)
+# ==============================================================================
+# Use this template to manually craft a new level scenario or run:
+#   pnpm new-level
+#
+# Rules:
+# - Save as: packages/scenarios/levels/<XX>-<slug>.yaml (e.g. 11-swarm-routing.yaml)
+# - No backend or database changes are required — levels are loaded automatically!
+# - Run 'pnpm validate-levels' to test validation against the schema.
+# ==============================================================================
+
+metadata:
+  id: custom-scenario-slug               # Unique string ID
+  order: 11                             # Display and progression sequence number
+  title: "Scenario Title Here"          # Shown on map & track slider
+  concept: "networking"                 # containers | images | networking | volumes | dockerfile | compose | troubleshooting | security | scaling
+  difficulty: medium                    # intro | easy | medium | hard | capstone
+  estimatedMinutes: 30                  # Estimated duration in minutes
+  prerequisites: [production-deployment] # ID(s) of prerequisite level(s) (empty [] for none)
+  xpReward: 350                         # XP awarded upon completion
+  commandFamilies:                      # Allowed command groups:
+    - container-lifecycle               # container-lifecycle, inspection, images, networking,
+    - inspection                        # storage, compose, build, system
+    - networking
+  learningGoals:
+    - "First goal: Understand service discovery failures"
+    - "Second goal: Reconnect services to isolated bridge networks"
+    - "Third goal: Verify HTTP communication across endpoints"
+
+narrative:
+  role: "You're the lead DevOps incident responder on call."
+  incident: >
+    Production incident summary: Customers are reporting 502 Bad Gateway errors.
+    The web proxy can no longer reach the backend application.
+  symptoms:
+    - "Ingress reverse proxy logs 502 Bad Gateway to /api."
+    - "Backend app container is running but on an isolated network."
+  missionBrief: >
+    Locate the network disconnection, reconnect the backend app container
+    to the shared bridge network, and verify end-to-end communication.
+  timeline:
+    - "14:10 — Release v2.4 applied to prod host."
+    - "14:12 — Monitoring alarms trigger on 502 rate spike."
+    - "14:15 — Incident assigned to your terminal."
+
+environment:
+  hostName: prod-11
+  images:
+    - repository: nginx
+      tag: "1.25"
+      pull: true
+  networks:
+    - name: frontend-net
+      driver: bridge
+    - name: backend-net
+      driver: bridge
+  volumes: []
+  containers:
+    - name: web-proxy
+      image: nginx:1.25
+      startState: running               # running | exited | created
+      restartPolicy: unless-stopped     # no | on-failure | always | unless-stopped
+      env:
+        APP_ENV: production
+      networks:
+        - frontend-net
+      ports:
+        - containerPort: 80
+          hostPort: 8080
+    - name: api-backend
+      image: nginx:1.25
+      startState: running
+      restartPolicy: unless-stopped
+      networks:
+        - backend-net
+
+hiddenState:
+  - "web-proxy and api-backend are isolated on two separate bridge networks."
+
+# Parts: The linear progression steps of this mission (investigate -> fix -> verify)
+parts:
+  - id: investigate
+    kind: investigate                  # investigate | fix | verify
+    title: "Inspect Network Topology"
+    objective: "Inspect existing docker networks and find where web-proxy is attached."
+    briefing: >
+      Start by finding out which bridge networks exist and inspecting the proxy's
+      network configuration.
+    hints:
+      - id: inv-hint-1
+        tier: concept                  # concept | direction | command | explanation
+        text: "Docker bridge networks isolate containers unless explicitly connected."
+        xpCost: 0
+      - id: inv-hint-2
+        tier: command
+        text: "Try: docker network ls and docker network inspect frontend-net"
+        xpCost: 10
+    docRefs:
+      - networks-inspecting
+      - networks-bridge
+    completionConditions:
+      - type: command_used
+        pattern: "^docker network (ls|inspect)"
+
+  - id: fix
+    kind: fix
+    title: "Bridge the Networks"
+    objective: "Connect api-backend to frontend-net so web-proxy can communicate with it."
+    briefing: >
+      Attach api-backend to frontend-net using docker network connect.
+    hints:
+      - id: fix-hint-1
+        tier: direction
+        text: "Use 'docker network connect' to bridge the second container into frontend-net."
+        xpCost: 5
+      - id: fix-hint-2
+        tier: command
+        text: "Try: docker network connect frontend-net api-backend"
+        xpCost: 10
+    docRefs:
+      - networks-bridge
+    completionConditions:
+      - type: network_connected
+        container: api-backend
+        network: frontend-net
+        connected: true
+
+  - id: verify
+    kind: verify
+    title: "Verify Network Health"
+    objective: "Verify both containers are running and attached to frontend-net."
+    briefing: >
+      Check container states and verify that traffic flows smoothly.
+    hints:
+      - id: ver-hint-1
+        tier: command
+        text: "Try: docker ps"
+        xpCost: 0
+    docRefs:
+      - networks-bridge
+    completionConditions:
+      - type: container_state
+        target: web-proxy
+        equals: running
+      - type: container_state
+        target: api-backend
+        equals: running
+
+# Overall scenario win condition (must all be true for mission completion)
+winCondition:
+  - type: network_connected
+    container: api-backend
+    network: frontend-net
+    connected: true
+  - type: container_state
+    target: web-proxy
+    equals: running
+
+failureConditions: []
+
+achievements:
+  - id: network-architect
+    title: "Mesh Restorer"
+    description: "Successfully re-established inter-container routing across production bridges."

@@ -1,0 +1,24 @@
+{
+  "name": "dockerops",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @dockerops/api prisma:migrate",
+    "db:generate": "pnpm --filter @dockerops/api prisma:generate",
+    "db:seed": "pnpm --filter @dockerops/api prisma:seed",
+    "new-level": "pnpm --filter @dockerops/scenarios new-level",
+    "validate-levels": "pnpm --filter @dockerops/scenarios validate"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20"
+  }
+}

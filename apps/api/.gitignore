@@ -1,0 +1,12 @@
+# Apps/API Local Ignore
+node_modules/
+dist/
+generated/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+.env*.local
+!.env.example
+!.env.*.example

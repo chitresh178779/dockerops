@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { PrismaModule } from "./prisma/prisma.module";
 import { CommonModule } from "./common/common.module";
 import { ScenariosModule } from "./scenarios/scenarios.module";
@@ -7,6 +7,8 @@ import { SandboxModule } from "./sandbox/sandbox.module";
 import { SessionsModule } from "./sessions/sessions.module";
 import { TerminalModule } from "./terminal/terminal.module";
 import { DocsModule } from "./docs/docs.module";
+import { PlayerMiddleware } from "./common/player.middleware";
+
 
 @Module({
   imports: [
@@ -20,4 +22,8 @@ import { DocsModule } from "./docs/docs.module";
     DocsModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(PlayerMiddleware).forRoutes("*");
+  }
+}

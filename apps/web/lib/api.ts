@@ -2,10 +2,25 @@ import type { LevelSummary, PlayerProfile } from "@dockerops/shared";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
+const PLAYER_KEY = "dockerops-player-id";
+
+function getPlayerId(): string {
+  if (typeof window === "undefined") return "";
+  let id = window.localStorage.getItem(PLAYER_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    window.localStorage.setItem(PLAYER_KEY, id);
+  }
+  return id;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Player-Id": getPlayerId(), ...init?.headers
+    },
     cache: "no-store",
   });
   if (!res.ok) {

@@ -1,30 +1,19 @@
-import { Injectable, OnModuleInit } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { Inject, Injectable, Scope, UnauthorizedException } from "@nestjs/common";
+import { REQUEST } from "@nestjs/core";
+import type { Request } from "express";
 
 /**
- * MVP has no auth flow (out of scope for this pass). Every request acts as
- * a single local player profile that's created on first boot, matching
- * "Later: multiplayer / accounts" in the spec's post-MVP list.
+ * Resolves the player for the current HTTP request.
+ * The id is attached by PlayerMiddleware from the X-Player-Id header.
  */
-@Injectable()
-export class CurrentUserService implements OnModuleInit {
-  private userId!: string;
-
-  constructor(private readonly prisma: PrismaService) {}
-
-  async onModuleInit() {
-    const existing = await this.prisma.user.findFirst({ where: { email: "player@dockerops.local" } });
-    if (existing) {
-      this.userId = existing.id;
-      return;
-    }
-    const created = await this.prisma.user.create({
-      data: { displayName: "Player One", email: "player@dockerops.local" },
-    });
-    this.userId = created.id;
-  }
+@Injectable({ scope: Scope.REQUEST })
+export class CurrentUserService {
+  constructor(@Inject(REQUEST) private readonly req: Request & { userId?: string }) { }
 
   getUserId(): string {
-    return this.userId;
+    if (!this.req.userId) {
+      throw new UnauthorizedException("Missing or invalid player id");
+    }
+    return this.req.userId;
   }
 }

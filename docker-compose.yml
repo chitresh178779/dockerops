@@ -13,7 +13,7 @@ services:
     volumes:
       - dockerops_pg:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dockerops"]
+      test: [ "CMD-SHELL", "pg_isready -U dockerops" ]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -21,10 +21,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
     ports:
-      - "56379:6379"
+      - "127.0.0.1:56379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 10

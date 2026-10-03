@@ -17,7 +17,7 @@ export function HintModal({
   sessionId: string;
   part: PublicPart;
 }) {
-  const sortedHints = [...part.hints].sort(
+  const sortedHints = [...(part?.hints ?? [])].sort(
     (a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier)
   );
   const [index, setIndex] = useState(0);
@@ -26,22 +26,24 @@ export function HintModal({
 
   useEffect(() => {
     if (open) setIndex(0);
-  }, [open, part.id]);
+  }, [open, part?.id]);
+
+  const safeIndex = sortedHints.length > 0 ? Math.min(Math.max(0, index), sortedHints.length - 1) : 0;
+  const current = sortedHints[safeIndex];
+  const isLast = safeIndex >= sortedHints.length - 1;
 
   useEffect(() => {
-    if (!open || sortedHints.length === 0) return;
+    if (!open || !current) return;
     setLoading(true);
     setText(null);
     api
-      .requestHint(sessionId, part.id, sortedHints[index].id)
+      .requestHint(sessionId, part.id, current.id)
       .then((h) => setText(h.text))
       .catch(() => setText("Could not load this hint."))
       .finally(() => setLoading(false));
-  }, [open, index, part.id, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, safeIndex, current?.id, part?.id, sessionId]);
 
-  if (sortedHints.length === 0) return null;
-  const current = sortedHints[index];
-  const isLast = index === sortedHints.length - 1;
+  if (!current || sortedHints.length === 0) return null;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -54,7 +56,7 @@ export function HintModal({
               HINT
             </Dialog.Title>
             <span className="text-xs font-mono font-bold text-white/70">
-              {index + 1}/{sortedHints.length}
+              {safeIndex + 1}/{sortedHints.length}
             </span>
           </div>
 
@@ -65,7 +67,7 @@ export function HintModal({
             ) : (
               text || "Think about data persistence. Where are the uploaded files stored? Are you using a volume?"
             )}
-            {current.xpCost > 0 && (
+            {current && current.xpCost > 0 && (
               <div className="mt-2 text-[10px] font-bold uppercase tracking-widest text-volt">
                 -{current.xpCost} XP
               </div>
@@ -76,7 +78,7 @@ export function HintModal({
           <div className="mt-6 flex items-center gap-3">
             {!isLast && (
               <button
-                onClick={() => setIndex((i) => i + 1)}
+                onClick={() => setIndex((i) => Math.min(i + 1, sortedHints.length - 1))}
                 className="flex-1 border border-line bg-surfaceRaised px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition-colors hover:border-lineLight hover:bg-surfaceHover"
               >
                 SHOW ANOTHER HINT

@@ -26,7 +26,7 @@ export function ObjectiveBar({ sessionId, part }: { sessionId: string; part: Pub
         >
           DOCS
         </button>
-        {part.hints.length > 0 && (
+        {part.hints && part.hints.length > 0 && (
           <button
             onClick={() => setHintOpen(true)}
             className="border border-acid/50 bg-acid/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-acid transition-colors hover:bg-acid/20"
@@ -36,8 +36,14 @@ export function ObjectiveBar({ sessionId, part }: { sessionId: string; part: Pub
         )}
       </div>
 
-      <HintModal open={hintOpen} onOpenChange={setHintOpen} sessionId={sessionId} part={part} />
-      <DocsModal open={docsOpen} onOpenChange={setDocsOpen} initialSlug={part.docRefs[0]} />
+      <HintModal
+        key={part.id}
+        open={hintOpen}
+        onOpenChange={setHintOpen}
+        sessionId={sessionId}
+        part={part}
+      />
+      <DocsModal open={docsOpen} onOpenChange={setDocsOpen} initialSlug={part.docRefs?.[0]} />
     </div>
   );
 }

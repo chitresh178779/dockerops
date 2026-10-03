@@ -44,6 +44,8 @@ export class SessionsService {
       throw new ForbiddenException(summary.lockedReason ?? "Level is locked");
     }
 
+    await this.endOtherActiveSessions(userId);
+
     const attempt = await this.prisma.missionAttempt.create({
       data: { userId, levelId },
     });
@@ -240,6 +242,17 @@ export class SessionsService {
         // eslint-disable-next-line no-await-in-loop
         await this.destroySession(s.id);
       }
+    }
+  }
+  private async endOtherActiveSessions(userId: string) {
+    const active = await this.prisma.gameSession.findMany({
+      where: { userId, status: { in: ["PROVISIONING", "READY"] } },
+      select: { id: true },
+    });
+    for (const s of active) {
+      this.logger.log(`Ending previous session ${s.id} for user ${userId}`);
+      // eslint-disable-next-line no-await-in-loop
+      await this.destroySession(s.id);
     }
   }
 }

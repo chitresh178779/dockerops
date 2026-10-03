@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit, ServiceUnavailableException } from "@nestjs/common";
 import Docker from "dockerode";
 import type { Duplex } from "node:stream";
 
@@ -15,6 +15,7 @@ export interface InteractiveExec {
 
 const SANDBOX_NETWORK = "dockerops-sandboxes";
 const CONTAINER_PREFIX = "dockerops-sbx-";
+const MAX_SANDBOXES = Number(process.env.MAX_SANDBOXES ?? 2);
 
 /**
  * Talks to the HOST Docker Engine only to provision/destroy one isolated
@@ -36,8 +37,13 @@ export class SandboxManagerService implements OnModuleInit {
   private async ensureNetwork() {
     const networks = await this.docker.listNetworks({ filters: { name: [SANDBOX_NETWORK] } });
     if (!networks.some((n) => n.Name === SANDBOX_NETWORK)) {
-      await this.docker.createNetwork({ Name: SANDBOX_NETWORK, Driver: "bridge" });
-      this.logger.log(`Created isolated network ${SANDBOX_NETWORK} for player sandboxes`);
+      await this.docker.createNetwork({
+        Name: SANDBOX_NETWORK,
+        Driver: "bridge",
+        Options: {
+          "com.docker.network.bridge.enable_icc": "false"
+        }
+      });
     }
   }
 
@@ -47,6 +53,19 @@ export class SandboxManagerService implements OnModuleInit {
 
   async provision(sessionId: string): Promise<string> {
     const name = this.containerNameFor(sessionId);
+
+    // Cap concurrent sandboxes so a 1 GB VM can't be overloaded.
+    const running = await this.docker.listContainers({
+      filters: { label: ["dockerops.session"] },
+    });
+    const others = running.filter((c) => !c.Names.includes(`/${name}`));
+    if (others.length >= MAX_SANDBOXES) {
+      this.logger.warn(`Sandbox limit reached (${others.length}/${MAX_SANDBOXES}); refusing ${name}`);
+      throw new ServiceUnavailableException(
+        "All game servers are busy right now. Please try again in a few minutes.",
+      );
+    }
+
     this.logger.log(`Provisioning sandbox ${name} from ${this.sandboxImage}`);
 
     const container = await this.docker.createContainer({
@@ -57,6 +76,10 @@ export class SandboxManagerService implements OnModuleInit {
         Privileged: true,
         NetworkMode: SANDBOX_NETWORK,
         AutoRemove: false,
+        Memory: 384 * 1024 * 1024,      // 384 MB RAM per sandbox
+        MemorySwap: 768 * 1024 * 1024,  // RAM + swap total
+        NanoCpus: 1_000_000_000,        // max 1 CPU core
+        PidsLimit: 300,                 // stops fork bombs
       },
       Labels: { "dockerops.session": sessionId },
     });

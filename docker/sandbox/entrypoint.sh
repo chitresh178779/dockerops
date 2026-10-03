@@ -2,7 +2,7 @@
 set -e
 
 # Start the inner Docker engine in the background.
-dockerd-entrypoint.sh --host=unix:///var/run/docker.sock --host=tcp://0.0.0.0:2375 &
+dockerd-entrypoint.sh --host=unix:///var/run/docker.sock &
 DOCKERD_PID=$!
 
 echo "[sandbox] waiting for inner dockerd..."

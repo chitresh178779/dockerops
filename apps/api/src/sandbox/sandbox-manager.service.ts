@@ -88,7 +88,7 @@ export class SandboxManagerService implements OnModuleInit {
     return container.id;
   }
 
-  private async waitUntilReady(containerId: string, timeoutMs = 60_000) {
+  private async waitUntilReady(containerId: string, timeoutMs = 120_000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {

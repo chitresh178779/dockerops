@@ -17,9 +17,18 @@ export class PlayerMiddleware implements NestMiddleware {
             const raw = req.headers["x-player-id"];
             if (typeof raw === "string" && UUID_RE.test(raw)) {
                 const email = `${raw.toLowerCase()}@players.dockerops.local`;
-                let user = await this.prisma.user.findFirst({ where: { email } });
-                if (!user) {
-                    user = await this.prisma.user.create({ data: { displayName: "Player", email } });
+                let user;
+                try {
+                    // One atomic "find or create" instead of find-then-create.
+                    user = await this.prisma.user.upsert({
+                        where: { email },
+                        update: {},
+                        create: { displayName: "Player", email },
+                    });
+                } catch (err: any) {
+                    // Two first-visit requests raced: the other one created the user. Just read it.
+                    if (err?.code !== "P2002") throw err;
+                    user = await this.prisma.user.findUniqueOrThrow({ where: { email } });
                 }
                 req.userId = user.id;
             }
